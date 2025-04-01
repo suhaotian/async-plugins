@@ -1,0 +1,11 @@
+node_modules
+.DS_Store
+lib
+dist
+output
+doc
+*.tsbuildinfo
+*.d.*
+*.js
+*.mjs
+!scripts/*

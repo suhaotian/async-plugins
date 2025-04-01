@@ -1,0 +1,105 @@
+{
+  "name": "async-plugins",
+  "version": "0.0.1",
+  "description": "A collection of helpful functions for async operations. 🛠",
+  "repository": "suhaotian/async-plugins",
+  "bugs": "https://github.com/suhaotian/async-plugins/issues",
+  "homepage": "https://github.com/suhaotian/async-plugins",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./utils": {
+      "import": {
+        "types": "./utils.mts",
+        "default": "./utils.mjs"
+      },
+      "require": {
+        "types": "./utils.ts",
+        "default": "./utils.js"
+      }
+    }
+  },
+  "browserslist": [
+    "last 1 version",
+    "> 1%"
+  ],
+  "scripts": {
+    "build": "tsup && node scripts/remove-type.mjs",
+    "postbuild": "is-ci || sh ./scripts/check-bundle-size.sh",
+    "build:lib": "rm -rf lib && tsc --project tsconfig.json",
+    "build:umd": "pnpm build:lib && pnpm webpack --config ./scripts/webpack.config.mjs",
+    "test": "vitest run --testTimeout=15000",
+    "checktype": "tsc --noEmit",
+    "start-publish": "pnpm build && pnpm build:umd && node scripts/purge-pkg-for-publish.mjs && npm publish --access public --no-git-checks --provenance --registry=https://registry.npmjs.org",
+    "push": "git push && git lfs push --all origin",
+    "prepare": "is-ci || pnpm build && husky",
+    "checksize": "pnpm --filter=vite-example build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.0",
+    "prettier": "^3.5.3",
+    "is-ci": "^3.0.1",
+    "typescript": "^5.8.2",
+    "@types/node": "^20.11.13",
+    "@tsconfig/recommended": "^1.0.8",
+    "lfs-auto-track": "^1.1.1",
+    "webpack": "^5.98.0",
+    "webpack-cli": "^6.0.1",
+    "typedoc": "^0.28.1",
+    "tsup": "^8.4.0",
+    "vitest": "^3.1.1",
+    "fast-glob": "^3.3.3"
+  },
+  "prettier": {
+    "printWidth": 100,
+    "tabWidth": 2,
+    "singleQuote": true,
+    "trailingComma": "es5",
+    "bracketSameLine": true
+  },
+  "lint-staged": {
+    "*": [
+      "lfs-auto-track 'image,video,audio:100kb;*:1024kb'"
+    ],
+    "*.{ts,tsx,mts}": [
+      "prettier --write"
+    ],
+    "*.{md,css,js,mjs}": [
+      "prettier --write"
+    ]
+  },
+  "files": [
+    "dist",
+    "./*.js",
+    "./*.mjs",
+    "./*.d.*",
+    "./chunk*",
+    "README.md"
+  ],
+  "keywords": [
+    "async retry",
+    "async cache",
+    "async dedupe",
+    "async poll",
+    "async queue",
+    "async utils",
+    "async helpers"
+  ],
+  "author": "suhaotian",
+  "license": "MIT"
+}
