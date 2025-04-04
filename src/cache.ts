@@ -1,9 +1,11 @@
+import { lru } from 'tiny-lru'; 
+
 // ===== ASYNC CACHE =====
 
 export interface CacheOptions<T> {
   ttl: number; // Time-to-live in milliseconds
   maxSize?: number; // Maximum number of items in cache
-  onEvict?: (key: string, value: T) => void; // Called when an item is evicted
+  // onEvict?: (key: string, value: T) => void; // NOTE: onEvict is not supported when using tiny-lru
   staleWhileRevalidate?: boolean; // Return stale data while fetching fresh data
   getTimestamp?: () => number; // For testing and sync with external time sources
   cacheErrorResults?: boolean; // Whether to cache rejected promises/errors
@@ -12,7 +14,7 @@ export interface CacheOptions<T> {
 export interface CacheEntry<T> {
   value: T;
   expiry: number;
-  lastAccessed: number;
+  lastAccessed: number; // Note: tiny-lru manages LRU internally, this might become redundant unless used elsewhere
   isError?: boolean;
 }
 
@@ -57,56 +59,29 @@ export function createAsyncCache<T = any>(options: Partial<CacheOptions<T>> = {}
     ...options,
   };
 
-  const cache = new Map<string, CacheEntry<T>>();
+  // Use tiny-lru for LRU eviction based on maxSize
+  // TTL is handled manually via CacheEntry.expiry to support staleWhileRevalidate
+  const cache = lru<CacheEntry<T>>(config.maxSize || 1000); // Ensure maxSize is defined
+  const refreshingKeys = new Set<string>(); // Track keys being refreshed
   const stats: CacheStats = {
     hits: 0,
     misses: 0,
     staleHits: 0,
     errors: 0,
-    size: 0,
+    size: 0, // size will be derived from cache.size
   };
 
-  // LRU eviction helper
-  function evictLRU() {
-    if (cache.size <= 0) return;
-
-    let oldestKey: string | null = null;
-    let oldestTime = Infinity;
-
-    for (const [key, entry] of cache.entries()) {
-      if (entry.lastAccessed < oldestTime) {
-        oldestTime = entry.lastAccessed;
-        oldestKey = key;
-      }
-    }
-
-    if (oldestKey) {
-      const entry = cache.get(oldestKey);
-      if (entry && config.onEvict) {
-        try {
-          config.onEvict(oldestKey, entry.value);
-        } catch (error) {
-          console.error('Error in cache eviction callback:', error);
-        }
-      }
-      cache.delete(oldestKey);
-    }
-  }
-
-  // Helper to clean expired entries
+  // Helper to clean expired entries based on manual expiry time
   function pruneExpired(): number {
     const now = config.getTimestamp?.() || Date.now();
     let count = 0;
 
-    for (const [key, entry] of cache.entries()) {
-      if (entry.expiry < now) {
-        if (config.onEvict) {
-          try {
-            config.onEvict(key, entry.value);
-          } catch (error) {
-            console.error('Error in cache eviction callback:', error);
-          }
-        }
+    // Iterate over a copy of keys as we might delete during iteration
+    const keys = Array.from(cache.keys());
+    for (const key of keys) {
+      const entry = cache.get(key); // Use get instead of peek (updates LRU order)
+      if (entry && entry.expiry < now) {
+        // NOTE: onEvict callback removed
         cache.delete(key);
         count++;
       }
@@ -127,45 +102,34 @@ export function createAsyncCache<T = any>(options: Partial<CacheOptions<T>> = {}
   ): (...args: Args) => Promise<T> {
     const safeFn = async function (...args: Args): Promise<T> {
       const key = keyGenerator ? keyGenerator(...args) : JSON.stringify(args);
-
       const now = config.getTimestamp?.() || Date.now();
 
-      // Clean expired entries occasionally (10% chance to avoid performance impact)
-      if (Math.random() < 0.1) {
-        pruneExpired();
-      }
-
-      // Enforce max size if needed
-      if (config.maxSize && cache.size >= config.maxSize) {
-        evictLRU();
-      }
-
-      // Check for valid cache entry
+      // Check for cache entry (tiny-lru's get updates LRU order)
       const existing = cache.get(key);
 
       // Handle stale-while-revalidate pattern
       if (existing) {
-        if (existing.expiry > now) {
-          // Valid cache hit - update last accessed time and return
-          existing.lastAccessed = now;
-          stats.hits++;
+        // Update lastAccessed for consistency if needed elsewhere, though tiny-lru handles LRU
+        existing.lastAccessed = now;
 
-          // If it's a cached error, we need to throw it
+        if (existing.expiry > now) {
+          // Valid cache hit
+          stats.hits++;
           if (existing.isError) {
             throw existing.value;
           }
-
           return existing.value;
         } else if (config.staleWhileRevalidate) {
-          // Stale but usable - trigger background refresh and return stale data
+          // Stale but usable
           const staleValue = existing.value;
           stats.staleHits++;
 
-          // If it's a cached error, we should still try to refresh
-          if (!existing.isError) {
+          if (!refreshingKeys.has(key)) {
+            refreshingKeys.add(key);
             // Refresh in background
             fn(...args)
               .then((freshValue) => {
+                // tiny-lru handles eviction if maxSize is reached on set
                 cache.set(key, {
                   value: freshValue,
                   expiry: now + config.ttl,
@@ -173,43 +137,57 @@ export function createAsyncCache<T = any>(options: Partial<CacheOptions<T>> = {}
                 });
               })
               .catch((error) => {
-                // If refresh fails and we're caching errors, update the cache
+                console.error(`Cache refresh failed for key "${key}":`, error);
+                // Decide whether to cache the error or remove the stale entry
                 if (config.cacheErrorResults) {
-                  stats.errors++;
-                  cache.set(key, {
-                    value: error,
-                    expiry: now + config.ttl,
-                    lastAccessed: now,
-                    isError: true,
-                  });
+                   cache.set(key, {
+                     value: error as T,
+                     expiry: now + config.ttl, // Cache error with standard TTL
+                     lastAccessed: now,
+                     isError: true,
+                   });
+                   stats.errors++;
+                } else {
+                  // Optionally remove the stale entry if refresh fails and errors aren't cached
+                  // cache.delete(key);
                 }
+              })
+              .finally(() => {
+                refreshingKeys.delete(key);
               });
-
-            return staleValue;
           }
 
-          // For cached errors, we don't return the stale error
-          // Instead, we continue to a fresh execution
+          // Return stale value (including stale errors)
+          if (existing.isError) {
+            throw staleValue;
+          }
+          return staleValue;
         }
+        // Entry exists but is expired and staleWhileRevalidate is false
+        // Fall through to cache miss logic
       }
 
-      // Cache miss or expired without stale-while-revalidate - execute the function
+      // Cache miss or expired without stale-while-revalidate
       stats.misses++;
+
+      // Occasional pruning of manually expired items
+      if (Math.random() < 0.1) {
+        pruneExpired();
+      }
 
       try {
         const result = await fn(...args);
-
+        // tiny-lru handles eviction if maxSize is reached on set
         cache.set(key, {
           value: result,
           expiry: now + config.ttl,
           lastAccessed: now,
         });
-
         return result;
       } catch (error) {
-        // Cache errors if configured to do so
         if (config.cacheErrorResults) {
           stats.errors++;
+          // tiny-lru handles eviction if maxSize is reached on set
           cache.set(key, {
             value: error as T,
             expiry: now + config.ttl,
@@ -217,7 +195,6 @@ export function createAsyncCache<T = any>(options: Partial<CacheOptions<T>> = {}
             isError: true,
           });
         }
-
         throw error;
       }
     };
@@ -227,57 +204,66 @@ export function createAsyncCache<T = any>(options: Partial<CacheOptions<T>> = {}
 
   // Add methods to manage cache
   asyncCache.clear = () => cache.clear();
-  asyncCache.size = () => cache.size;
+  asyncCache.size = () => cache.size; // Fix: Access size as a property
   asyncCache.delete = (key: string) => {
-    const entry = cache.get(key);
-    if (entry && config.onEvict) {
-      try {
-        config.onEvict(key, entry.value);
-      } catch (error) {
-        console.error('Error in cache eviction callback:', error);
-      }
-    }
-    return cache.delete(key);
+    // NOTE: onEvict callback removed
+    const existed = cache.has(key);
+    cache.delete(key); // tiny-lru delete returns the instance, not boolean
+    return existed; // Return whether it existed before deletion
   };
   asyncCache.has = (key: string) => cache.has(key);
   asyncCache.get = <K extends string>(key: K) => {
-    const entry = cache.get(key);
+    const entry = cache.get(key); // Updates LRU order
     if (!entry) return undefined;
 
-    // Don't return cached errors through direct get
-    if (entry.isError) return undefined;
-
     const now = config.getTimestamp?.() || Date.now();
+    entry.lastAccessed = now; // Update for consistency if needed
+
     if (entry.expiry > now) {
-      entry.lastAccessed = now;
       stats.hits++;
+      // Don't throw errors in get method - this is correct API behavior
+      if (entry.isError) {
+        return undefined;
+      }
       return entry.value;
-    } else if (config.staleWhileRevalidate) {
-      stats.staleHits++;
-      return entry.value;
+    } else {
+      // Expired
+      if (config.staleWhileRevalidate) {
+        stats.staleHits++;
+        // Return stale data, but don't throw errors from get
+        if (entry.isError) {
+          return undefined;
+        }
+        return entry.value;
+      }
+      // Expired and not SWR
+      return undefined;
     }
-    return undefined;
   };
   asyncCache.set = <K extends string>(key: K, value: T, ttl?: number, isError?: boolean) => {
     const now = config.getTimestamp?.() || Date.now();
+    // tiny-lru handles eviction if maxSize is reached on set
     cache.set(key, {
       value,
-      expiry: now + (ttl || config.ttl),
+      expiry: now + (ttl ?? config.ttl),
       lastAccessed: now,
       isError,
     });
   };
-  asyncCache.keys = () => Array.from(cache.keys());
+  asyncCache.keys = () => Array.from(cache.keys()); // Remove redundant type casting
+  // Use get for getEntry (updates LRU order, unlike peek)
   asyncCache.getEntry = <K extends string>(key: K) => cache.get(key);
   asyncCache.updateTTL = <K extends string>(key: K, ttl: number) => {
-    const entry = cache.get(key);
+    const entry = cache.get(key); // Use get instead of peek (updates LRU order)
     if (!entry) return false;
 
     const now = config.getTimestamp?.() || Date.now();
     entry.expiry = now + ttl;
+    // Re-set to ensure the update is stored correctly by tiny-lru
+    cache.set(key, entry);
     return true;
   };
-  asyncCache.stats = () => ({ ...stats, size: cache.size });
+  asyncCache.stats = () => ({ ...stats, size: cache.size }); // Fix: Access size as a property
   asyncCache.prune = () => pruneExpired();
 
   return asyncCache;

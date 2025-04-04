@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { asyncRetry, RetryError, RetryOptions, RetryStrategies } from '../src/retry';
+import { createAsyncRetry, asyncRetry, RetryError, RetryOptions, RetryStrategies } from '../src/retry';
 
 // Helper function to create a mock operation that fails a certain number of times
 const createFailingOperation = <T>(
@@ -49,120 +49,107 @@ describe('asyncRetry', () => {
   });
 
   it('should throw RetryError if the operation fails after all retries', async () => {
-    console.log('[TEST] Starting');
     const operation = createFailingOperation(4, 'Success', 'Persistent failure');
     const options: Partial<RetryOptions> = { retries: 3, minTimeout: 10, factor: 2 };
 
-    console.log('[TEST] Calling asyncRetry');
     const promise = asyncRetry(operation, options);
 
-    // Optional: Add a direct catch to the promise for logging ONLY
-    // This helps see if the promise itself *knows* it's rejected
-    promise.catch((err) => {
-      console.log('[TEST] Promise internal .catch() triggered:', err?.message);
-    });
-
-    console.log('[TEST] Running timers');
+    // Run timers to allow all retries to happen
     await vi.runAllTimersAsync();
-    console.log('[TEST] Timers finished');
 
-    let caughtError: Error | null = null;
-    let finallyExecuted = false;
-
-    try {
-      console.log('[TEST] Awaiting promise in try block...');
-      await promise; // Await the promise that we expect to reject
-      console.error('[TEST] !!! Promise resolved unexpectedly!'); // This should NOT appear
-    } catch (error) {
-      console.log('[TEST] Caught error in catch block:', (error as Error)?.message);
-      caughtError = error as Error;
-    } finally {
-      console.log('[TEST] Finally block executed.');
-      finallyExecuted = true;
-    }
-
-    console.log(
-      `[TEST] After try/catch. Error caught? ${!!caughtError}. Finally executed? ${finallyExecuted}`
+    // Assert that the promise rejects with the correct RetryError
+    // Consolidate rejection check
+    await expect(promise).rejects.toThrowError(
+      expect.objectContaining({
+        name: 'RetryError',
+        message: 'Failed after 4 attempt(s): Persistent failure',
+        attempts: 4,
+        originalError: expect.objectContaining({ message: 'Persistent failure' }),
+      })
     );
 
-    // Perform assertions only if the error was caught by the try/catch
-    console.log('[TEST] Performing assertions...');
-    expect(finallyExecuted).toBe(true); // Sanity check
-    expect(caughtError).not.toBeNull(); // Check if the error object was captured
-
-    if (caughtError) {
-      expect(caughtError).toBeInstanceOf(RetryError);
-      expect(caughtError).toHaveProperty(
-        'message',
-        'Failed after 4 attempt(s): Persistent failure'
-      );
-      expect(caughtError).toHaveProperty('attempts', 4);
-      expect(caughtError).toHaveProperty('originalError');
-      expect((caughtError as any).originalError).toHaveProperty('message', 'Persistent failure');
-      console.log('[TEST] Assertions on caught error passed.');
-    } else {
-      console.error('[TEST] !!! Assertions skipped because no error was caught!');
-    }
-
+    // Verify the operation was called the correct number of times (initial + retries)
     expect(operation).toHaveBeenCalledTimes(4);
-    console.log('[TEST] Call count assertion passed.');
-    console.log('[TEST] Finished.');
   });
 
-  // it('should handle non-Error rejections', async () => {
-  //   const operation = vi.fn().mockRejectedValue('Just a string rejection');
-  //   const options: Partial<RetryOptions> = { retries: 1, minTimeout: 10 };
+  it('should handle non-Error rejections', async () => {
+    const operation = vi.fn(async () => {
+      // Always reject with the non-Error value for this test
+      return Promise.reject('Just a string rejection');
+    });
 
-  //   const promise = asyncRetry(operation, options);
-  //   await vi.advanceTimersByTimeAsync(1); // Allow first attempt
-  //   expect(operation).toHaveBeenCalledTimes(1);
-  //   await vi.advanceTimersByTimeAsync(10); // First retry delay
-  //   expect(operation).toHaveBeenCalledTimes(2); // Second attempt
+    const options: Partial<RetryOptions> = { retries: 1, minTimeout: 10 }; // 1 retry = 2 attempts
+    const promise = asyncRetry(operation, options);
 
-  //   // Add await before expect().rejects...
-  //   await expect(promise).rejects.toThrow(RetryError);
-  //   // Consolidate rejection check into one await
-  //   await expect(promise).rejects.toThrowError(
-  //     expect.objectContaining({
-  //       name: 'RetryError',
-  //       message: 'Failed after 2 attempt(s): Just a string rejection',
-  //       attempts: 2,
-  //       originalError: expect.objectContaining({ message: 'Just a string rejection' }),
-  //     })
-  //   );
-  //   // Removed redundant try/catch
-  //   expect(operation).toHaveBeenCalledTimes(2);
-  // });
+    // Allow first attempt (rejects) and the timer for the retry to run
+    await vi.runAllTimersAsync(); // Runs first attempt, delay, second attempt (which also rejects)
 
-  // it('should use RetryStrategies.NETWORK_ONLY correctly', async () => {
-  //   const networkErrorOp = createFailingOperation(1, 'Success', 'Network Error'); // Should retry
-  //   const clientErrorOp = createFailingOperation(1, 'Success', 'Client Error 404'); // Should not retry
+    // Assert rejection with RetryError after all attempts fail
+    await expect(promise).rejects.toThrowError(
+      expect.objectContaining({
+        name: 'RetryError',
+        message: 'Failed after 2 attempt(s): Just a string rejection', // Should be attempt 2 now
+        attempts: 2,
+        originalError: expect.objectContaining({ message: 'Just a string rejection' }),
+      })
+    );
 
-  //   const options: Partial<RetryOptions> = {
-  //     retries: 1,
-  //     minTimeout: 10,
-  //     shouldRetry: RetryStrategies.NETWORK_ONLY,
-  //   };
+    // Verify the operation was called twice (initial + 1 retry)
+    expect(operation).toHaveBeenCalledTimes(2);
+  });
 
-  //   // Test network error (should retry and succeed)
-  //   // Test network error (should retry and succeed)
-  //   const promiseNetwork = asyncRetry(networkErrorOp, options);
-  //   // Allow the first attempt to fail and the retry logic to schedule the timer
-  //   await vi.advanceTimersByTimeAsync(1); // Let microtasks run for the first attempt/failure
-  //   expect(networkErrorOp).toHaveBeenCalledTimes(1);
-  //   // Now run the timer for the delay, triggering the second attempt
-  //   await vi.runAllTimersAsync();
-  //   // Explicitly await the promise resolution *after* timers have run
-  //   await expect(promiseNetwork).resolves.toBe('Success');
-  //   expect(networkErrorOp).toHaveBeenCalledTimes(2); // Initial + 1 retry
+  it('should use RetryStrategies.NETWORK_ONLY correctly', async () => {
+    // Simulate a network error (TypeError as per strategy)
+    let networkAttempts = 0;
+    const networkErrorOp = vi.fn(async () => {
+      networkAttempts++;
+      if (networkAttempts <= 1) {
+        // Simulate a fetch-like TypeError
+        throw new TypeError('fetch failed');
+      }
+      return 'Network Success';
+    });
 
-  //   // Test client error (should fail immediately after first attempt)
-  //   const promiseClient = asyncRetry(clientErrorOp, options);
-  //   await vi.advanceTimersByTimeAsync(1); // Allow first attempt to run
-  //   // shouldRetry returns false, so no delay/retry happens
-  //   await expect(promiseClient).rejects.toThrow('Failed after 1 attempt(s): Client Error 404');
-  //   expect(clientErrorOp).toHaveBeenCalledTimes(1); // Only the initial attempt
-  // });
+    // Simulate a client error (4xx)
+    let clientAttempts = 0;
+    const clientErrorOp = vi.fn(async () => {
+      clientAttempts++;
+      if (clientAttempts <= 1) {
+        // Simulate a 4xx error message
+        throw new Error('Client Error 404 Not Found');
+      }
+      return 'Client Success';
+    });
+
+    const options: Partial<RetryOptions> = {
+      retries: 1,
+      minTimeout: 10,
+      shouldRetry: RetryStrategies.NETWORK_ONLY,
+    };
+
+    // --- Test network error (should retry and succeed) ---
+    const promiseNetwork = asyncRetry(networkErrorOp, options);
+    // Run timers to allow the retry attempt
+    await vi.runAllTimersAsync();
+    // Assert success after retry
+    await expect(promiseNetwork).resolves.toBe('Network Success');
+    expect(networkErrorOp).toHaveBeenCalledTimes(2); // Initial + 1 retry
+
+    // --- Test client error (should fail immediately after first attempt) ---
+    const promiseClient = asyncRetry(clientErrorOp, options);
+    // Run timers (though no retry should be scheduled)
+    await vi.runAllTimersAsync();
+    // Consolidate rejection check
+    await expect(promiseClient).rejects.toThrowError(
+      expect.objectContaining({
+        name: 'RetryError',
+        message: 'Failed after 1 attempt(s): Client Error 404 Not Found',
+        attempts: 1,
+        originalError: expect.objectContaining({ message: 'Client Error 404 Not Found' }),
+      })
+    );
+    expect(clientErrorOp).toHaveBeenCalledTimes(1); // Only the initial attempt
+  });
 
   it('should call onRetry callback on each retry attempt', async () => {
     const operation = createFailingOperation(2, 'Success');
@@ -310,5 +297,67 @@ describe('asyncRetry', () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith('Error in retry callback:', expect.any(Error));
 
     consoleErrorSpy.mockRestore();
+  });
+});
+
+describe('README Examples', () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    originalFetch = global.fetch;
+    const mockFetch = vi.fn();
+    (global as any).fetch = mockFetch;
+  });
+
+  afterEach(() => {
+    (global as any).fetch = originalFetch;
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('should work with the API call example', async () => {
+    const mockFetch = global.fetch as any;
+
+    // Mock a flaky API that succeeds on the third try
+    let attempts = 0;
+    mockFetch.mockImplementation(async () => {
+      attempts++;
+      if (attempts < 3) {
+        throw new Error('Network error');
+      }
+      return {
+        json: () => Promise.resolve({ data: 'success' })
+      };
+    });
+
+    const operation = async () => {
+      const response = await mockFetch('/api/data');
+      return response.json();
+    };
+
+    const promise = asyncRetry(operation, {
+      retries: 5,
+      minTimeout: 1000,
+      maxTimeout: 5000,
+      onRetry: (error, attempt) => {
+        console.error(`Attempt ${attempt} failed:`, error);
+      }
+    });
+    
+    // First attempt fails immediately
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Second attempt fails after backoff
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    // Third attempt succeeds
+    await vi.advanceTimersByTimeAsync(2000);
+    const result = await promise;
+    
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(result).toEqual({ data: 'success' });
   });
 });

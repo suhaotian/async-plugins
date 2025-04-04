@@ -1,5 +1,3 @@
-// ===== ASYNC RETRY =====
-
 export interface RetryOptions {
   retries: number;
   minTimeout: number;
@@ -25,16 +23,22 @@ export const RetryStrategies = {
    */
   NETWORK_ONLY: (error: Error) => {
     if (error.name === 'AbortError') return false;
-    return (
-      !(error instanceof TypeError && error.message.includes('fetch failed')) &&
-      !(error instanceof Error && /^(4\d\d)/.test(error.message))
-    );
+
+    // Retry if it's a network error but not a 4xx client error
+    // Note: Parsing error messages for status codes can be brittle.
+    // Consider checking specific error types or properties (e.g., error.status) if available.
+    const isNetworkError = error instanceof TypeError && error.message.includes('fetch failed');
+    const isClientError = error instanceof Error && /^(4\d\d)/.test(error.message);
+
+    return isNetworkError && !isClientError;
   },
 
   /**
    * Retry on server errors (5xx) but not on client errors (4xx)
    */
   SERVER_ERRORS: (error: Error) => {
+    // Note: Parsing error messages for status codes can be brittle.
+    // Consider checking specific error types or properties (e.g., error.status) if available.
     return error instanceof Error && /^(5\d\d)/.test(error.message);
   },
 };
@@ -51,8 +55,18 @@ export class RetryError extends Error {
     this.name = 'RetryError';
     this.originalError = originalError;
     this.attempts = attempts;
+    
+    // Capture proper stack trace in modern JS environments
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, RetryError);
+    }
   }
 }
+
+/**
+ * Constant for abort error message to ensure consistency
+ */
+const ABORT_ERROR_MESSAGE = 'Retry operation aborted';
 
 /**
  * Retries an asynchronous operation with configurable exponential backoff
@@ -74,42 +88,38 @@ export async function asyncRetry<T>(
     ...options,
   };
 
-  let lastError: Error | undefined; // Initialize explicitly
-  let finalAttemptCount = 0; // Track actual attempts
+  let lastError: Error | undefined;
+  let finalAttemptCount = 0;
+
+  // Check if already aborted before starting
+  if (config.abortSignal?.aborted) {
+    throw new Error(ABORT_ERROR_MESSAGE);
+  }
 
   for (let attempt = 0; attempt <= config.retries; attempt++) {
-    finalAttemptCount = attempt + 1; // Update attempt count
+    finalAttemptCount = attempt + 1;
+    
     try {
-      // Check if operation has been aborted
-      if (config.abortSignal?.aborted) {
-        throw new Error('Retry operation aborted');
-      }
-
       return await operation();
     } catch (error) {
+      // Ensure error is properly typed
       lastError = error instanceof Error ? error : new Error(String(error));
-
-      // Check for abort *immediately* after catching any error (including the delay rejection)
+      
+      // Check if operation has been aborted
       if (config.abortSignal?.aborted) {
-         // If the caught error is already the specific abort error, rethrow it directly.
-         // Otherwise, throw the standard abort error.
-         if (lastError.message === 'Retry operation aborted') {
-             throw lastError;
-         } else {
-             throw new Error('Retry operation aborted');
-         }
+        throw new Error(ABORT_ERROR_MESSAGE);
       }
-
-      // Exit conditions (if not aborted)
-      if (attempt === config.retries) { // No longer need || config.abortSignal?.aborted here
+      
+      // Exit if this was the last attempt
+      if (attempt === config.retries) {
         break;
       }
-
-      // Check if we should retry based on the error (if not aborted)
+      
+      // Check if we should retry based on the error
       if (config.shouldRetry && !(await Promise.resolve(config.shouldRetry(lastError)))) {
         break;
       }
-
+      
       // Call onRetry callback if provided
       if (config.onRetry) {
         try {
@@ -119,46 +129,47 @@ export async function asyncRetry<T>(
           console.error('Error in retry callback:', callbackError);
         }
       }
-
+      
       // Calculate backoff timeout
       let timeout = Math.min(
         config.maxTimeout,
         config.minTimeout * Math.pow(config.factor, attempt)
       );
-
+      
       // Add jitter if enabled to prevent thundering herd problem
       if (config.jitter) {
         const jitterFactor = 0.5 + Math.random() * 0.5; // Random between 0.5 and 1
         timeout = Math.floor(timeout * jitterFactor);
       }
-
+      
       // Create abort-aware timeout
       await new Promise<void>((resolve, reject) => {
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
         let abortHandler: (() => void) | undefined;
-
+        
         const cleanup = () => {
           if (timeoutId) clearTimeout(timeoutId);
           if (config.abortSignal && abortHandler) {
             config.abortSignal.removeEventListener('abort', abortHandler);
           }
         };
-
+        
         // Handle abort signal
         if (config.abortSignal) {
           abortHandler = () => {
             cleanup();
-            reject(new Error('Retry operation aborted'));
+            reject(new Error(ABORT_ERROR_MESSAGE));
           };
-
+          
           if (config.abortSignal.aborted) {
             // If already aborted before timeout starts
             abortHandler();
             return;
           }
+          
           config.abortSignal.addEventListener('abort', abortHandler, { once: true });
         }
-
+        
         timeoutId = setTimeout(() => {
           cleanup();
           resolve();
@@ -166,8 +177,8 @@ export async function asyncRetry<T>(
       });
     }
   }
-
-  // Throw RetryError if lastError is defined (it should always be if we reach here)
+  
+  // Throw RetryError if lastError is defined
   if (lastError) {
     throw new RetryError(
       `Failed after ${finalAttemptCount} attempt(s): ${lastError.message}`,
@@ -179,3 +190,18 @@ export async function asyncRetry<T>(
     throw new Error(`Retry mechanism failed unexpectedly after ${finalAttemptCount} attempts.`);
   }
 }
+
+/**
+ * Creates a retry function with pre-configured options
+ * @param defaultOptions Default options to use for all retries
+ * @returns A function that retries operations with the default options
+ */
+export function createAsyncRetry(defaultOptions: Partial<RetryOptions>) {
+  return function retryWithOptions<T>(
+    operation: () => Promise<T>,
+    overrideOptions: Partial<RetryOptions> = {}
+  ): Promise<T> {
+    return asyncRetry(operation, { ...defaultOptions, ...overrideOptions });
+  };
+}
+

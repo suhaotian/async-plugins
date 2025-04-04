@@ -6,97 +6,245 @@
 
 ## Intro
 
-🛠 A collection of helpful functions for async operations.
+🛠 A lightweight collection of TypeScript utilities for common async operation patterns. Each utility is optimized for performance and provides a clean, type-safe API.
 
 **Features:**
 
-- [ ] **async-retry**: Retry async operations with configurable backoff
-- [ ] **async-cache**: Cache results of async operations with LRU eviction
-- [ ] **async-dedupe**: Deduplicate simultaneous identical async operations
-- [ ] **async-queue**: Process operations sequentially or with configurable concurrency limits.
-- [ ] **async-timeout**: Add timeouts to async operations that might hang.
-- [ ] **async-poll**: Periodically check for a condition with configurable intervals.
-
-- ~~[ ] **async-throttle**: Limit the number of concurrent operations to prevent overwhelming resources.~~
-- ~~[ ] **async-debounce**: Delay execution until after a period of inactivity, useful for handling user input.~~
-- ~~[ ] **async-memoize**: Remember results of expensive operations based on input parameters.~~
-- ~~[ ] **async-semaphore**: Control access to limited resources across asynchronous operations.~~
-- ~~[ ] **async-circuit-breaker**: Prevent cascading failures by stopping operations when error rates exceed thresholds.~~
-- ~~[ ] **async-rate-limit**: Enforce operation limits per time window.~~
-- 👊 Unit tested and strongly typed 💪
-- 🚀 Lightweight and Tree-shakeable (~?KB, Gzip ~?kb)
-
-## Table of Contents
-
-- [Intro](#intro)
-- [Table of Contents](#table-of-contents)
-- [Getting Started](#getting-started)
-  - [Installing](#installing)
-    - [Package manager](#package-manager)
-- [Helper functions](#helper-functions)
-- [FAQ](#faq)
-  - [1. Why is named **"async-plugins"**?](#1-why-is-named-async-plugins)
-  - [2. Where can I ask additional questions?](#2-where-can-i-ask-additional-questions)
-- [API Reference](#api-reference)
-- [Star History](#star-history)
-- [Thanks](#thanks)
+- ⚡️ **async-retry**: Smart retry logic with exponential backoff for API calls and network operations
+- 🗄️ **async-cache**: Fast LRU caching with TTL support for expensive operations
+- 🎯 **async-dedupe**: Prevent duplicate API calls and redundant operations
+- 📊 **async-queue**: Control concurrency and resource usage with priority queues
+- 🔄 **async-poll**: Reliable polling with configurable intervals and backoff
+- 👊 Fully typed with TypeScript
+- 🎭 Comprehensive test coverage
+- 📦 Tree-shakeable and lightweight
+- 🚫 Zero dependencies (except tiny-lru)
 
 ## Getting Started
 
 ### Installing
 
-#### Package manager
-
 ```sh
-# npm
-npm install async-plugins
-
-# pnpm
-pnpm add async-plugins
-
-# bun
-bun add async-plugins
-
-# yarn
-yarn add async-plugins
-
-# deno
-deno install npm:async-plugins
+npm install async-plugins   # npm
+pnpm add async-plugins     # pnpm
+bun add async-plugins      # bun
+yarn add async-plugins     # yarn
 ```
 
-## Helper functions
+## Usage Examples
 
-**async-plugins** has some built-in helper functions, may useful for you:
+### Retry
+
+Perfect for handling flaky API calls or network operations:
 
 ```ts
-import {
-  // ....
-} from 'async-plugins';
+import { createAsyncRetry } from 'async-plugins';
+
+const fetchWithRetry = createAsyncRetry({
+  retries: 3,                    // Try up to 3 times
+  minTimeout: 1000,             // Start with 1s delay
+  maxTimeout: 10000,            // Cap at 10s delay
+  factor: 2,                    // Double the delay each time
+  jitter: true,                 // Add randomness to prevent thundering herd
+  shouldRetry: (error) => {     // Only retry on network/5xx errors
+    return error.name === 'NetworkError' || 
+           (error.status && error.status >= 500);
+  },
+  onRetry: (error, attempt) => {
+    console.warn(`Retry attempt ${attempt} after error:`, error);
+  }
+});
+
+// Example: Fetch user data with retries
+const getUserData = async (userId: string) => {
+  try {
+    const response = await fetchWithRetry(() => 
+      fetch(`/api/users/${userId}`).then(r => r.json())
+    );
+    return response;
+  } catch (error) {
+    // All retries failed
+    console.error('Failed to fetch user data:', error);
+    throw error;
+  }
+};
+```
+
+### Cache
+
+Optimize expensive operations and API calls with smart caching:
+
+```ts
+import { createAsyncCache } from 'async-plugins';
+
+const cache = createAsyncCache({
+  ttl: 300000,                // Cache for 5 minutes
+  maxSize: 1000,              // Store up to 1000 items
+  staleWhileRevalidate: true, // Return stale data while refreshing
+});
+
+// Example: Cache expensive API calls
+const getUserProfile = cache(
+  async (userId: string) => {
+    const response = await fetch(`/api/users/${userId}`);
+    return response.json();
+  },
+  // Optional: Custom cache key generator
+  (userId) => `user_profile:${userId}`
+);
+
+// First call fetches and caches
+const profile1 = await getUserProfile('123');
+
+// Subsequent calls within TTL return cached data
+const profile2 = await getUserProfile('123'); // instant return
+
+// After TTL expires, returns stale data and refreshes in background
+const profile3 = await getUserProfile('123'); // instant return with stale data
+```
+
+### Dedupe
+
+Prevent duplicate API calls and redundant operations:
+
+```ts
+import { createAsyncDedupe } from 'async-plugins';
+
+const dedupe = createAsyncDedupe({
+  timeout: 5000,      // Auto-expire after 5s
+  errorSharing: true, // Share errors between duplicate calls
+});
+
+// Example: Prevent duplicate API calls
+const fetchUserData = dedupe(async (userId: string) => {
+  const response = await fetch(`/api/users/${userId}`);
+  return response.json();
+});
+
+// Multiple simultaneous calls with same ID
+const [user1, user2] = await Promise.all([
+  fetchUserData('123'),  // Makes API call
+  fetchUserData('123'),  // Uses result from first call
+]);
+
+// Check if operation is in progress
+if (dedupe.isInProgress('123')) {
+  console.log('Fetch in progress...');
+}
+```
+
+### Queue
+
+Control concurrency and manage resource usage:
+
+```ts
+import { createAsyncQueue } from 'async-plugins';
+
+const queue = createAsyncQueue({
+  concurrency: 2,     // Process 2 tasks at once
+  autoStart: true,    // Start processing immediately
+});
+
+// Example: Rate-limit API calls
+const processUsers = async (userIds: string[]) => {
+  const results = await queue.addAll(
+    userIds.map(id => async () => {
+      const response = await fetch(`/api/users/${id}`);
+      return response.json();
+    })
+  );
+  return results;
+};
+
+// Monitor queue status
+queue.onEmpty().then(() => {
+  console.log('Queue is empty');
+});
+
+queue.onDrain().then(() => {
+  console.log('All tasks completed');
+});
+
+// Queue stats
+console.log(queue.stats());
+// { pending: 0, active: 2, completed: 10, errors: 0, total: 12 }
+```
+
+### Poll
+
+Reliable polling with configurable intervals:
+
+```ts
+import { createAsyncPoller } from 'async-plugins';
+
+// Example: Poll for job completion
+const pollJobStatus = createAsyncPoller(
+  // Function to poll
+  async () => {
+    const response = await fetch('/api/job/123');
+    return response.json();
+  },
+  {
+    interval: 1000,   // Poll every second
+    maxAttempts: 30,  // Try up to 30 times
+    backoff: {
+      type: 'exponential',
+      factor: 2,
+      maxInterval: 30000,
+      jitter: true,
+    },
+    shouldContinue: (result) => result.status === 'running',
+    onProgress: (result) => {
+      console.log('Job progress:', result.progress);
+    }
+  }
+);
+
+try {
+  const finalResult = await pollJobStatus.start();
+  console.log('Job completed:', finalResult);
+} catch (error) {
+  console.error('Polling failed:', error);
+}
+
+// Can stop polling manually if needed
+pollJobStatus.stop();
 ```
 
 ## FAQ
 
-**async-plugins** frequently asked questions.
+### 1. Why choose async-plugins?
 
-### 1. Why is named **"async-plugins"**?
+- 🎯 **Focused Purpose**: Each utility solves a specific async pattern problem
+- 📦 **Lightweight**: Minimal bundle size impact with tree-shaking support
+- 💪 **Type-Safe**: Written in TypeScript with comprehensive type definitions
+- 🔧 **Customizable**: Flexible configuration options for each utility
+- 🚀 **Production-Ready**: Well-tested and actively maintained
 
-**async-utils** or **async-helpers** already used
+### 2. Where can I get help?
 
-### 2. Where can I ask additional questions?
+If you have questions or run into issues:
 
-If you have any questions, feel free to create issues.
+1. Check the [API Reference](https://www.jsdocs.io/package/async-plugins)
+2. Create an issue on [GitHub](https://github.com/suhaotian/async-plugins/issues)
+3. For security issues, please email me directly
 
-## API Reference
+## Contributing
 
-- https://www.jsdocs.io/package/async-plugins
+Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details.
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
 
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=suhaotian/async-plugins&type=Date)](https://star-history.com/#suhaotian/async-plugins&Date)
 
-## Thanks
+## Acknowledgements
 
-Without the support of these resources, **async-plugins** wouldn't be possible:
+This project wouldn't be possible without:
 
+- [tiny-lru](https://github.com/avoidwork/tiny-lru) for LRU cache implementation
 - Claude 3.7 Sonnet
 - Gemini 2.5 Pro
