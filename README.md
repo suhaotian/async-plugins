@@ -1,8 +1,8 @@
 [![Build](https://github.com/suhaotian/async-plugins/actions/workflows/check.yml/badge.svg)](https://github.com/suhaotian/async-plugins/actions/workflows/check.yml)
 [![Size](https://deno.bundlejs.com/badge?q=async-plugins@0.0.2&badge=detailed)](https://bundlejs.com/?q=async-plugins%400.0.2)
 [![Treeshaking](https://badgen.net/bundlephobia/tree-shaking/async-plugins)](https://bundlephobia.com/package/async-plugins@latest)
-[![npm version](https://badgen.net/npm/v/async-plugins?color=green)](https://www.npmjs.com/package/async-plugins)
 [![jsDocs.io](https://img.shields.io/badge/jsDocs.io-reference-blue)](https://www.jsdocs.io/package/async-plugins)
+[![npm version](https://badgen.net/npm/v/async-plugins?color=green)](https://www.npmjs.com/package/async-plugins)
 ![Downloads](https://img.shields.io/npm/dm/async-plugins.svg?style=flat)
 ![typescript](https://badgen.net/badge/icon/typescript?icon=typescript&label&color=blue)
 
