@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createAsyncRetry, asyncRetry, RetryError, RetryOptions, RetryStrategies } from '../src/retry';
 
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Optionally, you can also terminate the process:
+  // process.exit(1);
+});
+
 // Helper function to create a mock operation that fails a certain number of times
 const createFailingOperation = <T>(
   failCount: number,

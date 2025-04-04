@@ -2,6 +2,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createAsyncDedupe, type AsyncDedupe } from '../src/dedupe';
 
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Optionally, you can also terminate the process:
+  // process.exit(1);
+});
+
 describe('createAsyncDedupe', () => {
   let dedupe: AsyncDedupe;
 

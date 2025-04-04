@@ -2,6 +2,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createAsyncQueue, QueueOptions } from '../src/queue'; // Adjust path if needed
 
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Optionally, you can also terminate the process:
+  // process.exit(1);
+});
+
 // Helper function for creating delayed tasks
 const createTask = <T>(duration: number, value: T, shouldReject = false): (() => Promise<T>) => {
   return () =>

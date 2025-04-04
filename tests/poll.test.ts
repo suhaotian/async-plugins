@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createAsyncPoller, PollError, type PollOptions, type AsyncPoller } from '../src/poll'; // Update with actual path
 
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Optionally, you can also terminate the process:
+  // process.exit(1);
+});
+
 describe('AsyncPoller', () => {
   // Mock timers for predictable testing
   beforeEach(() => {

@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createAsyncCache, type AsyncCache } from '../src/cache'; // Update with correct import path
 
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Optionally, you can also terminate the process:
+  // process.exit(1);
+});
+
 describe('createAsyncCache', () => {
   let mockTime = 1000;
   const getTimestamp = vi.fn(() => mockTime);
