@@ -1,6 +1,6 @@
 {
   "name": "async-plugins",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "A collection of helpful functions for async operations. 🛠",
   "repository": "suhaotian/async-plugins",
   "bugs": "https://github.com/suhaotian/async-plugins/issues",
@@ -15,10 +15,6 @@
       "import": {
         "types": "./dist/index.d.mts",
         "default": "./dist/index.mjs"
-      },
-      "require": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/index.js"
       }
     },
     "./utils": {

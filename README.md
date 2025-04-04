@@ -35,6 +35,8 @@ yarn add async-plugins     # yarn
 
 ## Usage Examples
 
+Example online: https://stackblitz.com/edit/js-fjsqnhfc?file=index.js
+
 ### Retry
 
 Perfect for handling flaky API calls or network operations:
