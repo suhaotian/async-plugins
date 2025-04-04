@@ -1,6 +1,6 @@
 {
   "name": "async-plugins",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A collection of helpful functions for async operations. 🛠",
   "repository": "suhaotian/async-plugins",
   "bugs": "https://github.com/suhaotian/async-plugins/issues",

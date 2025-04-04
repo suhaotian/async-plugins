@@ -1,5 +1,5 @@
 [![Build](https://github.com/suhaotian/async-plugins/actions/workflows/check.yml/badge.svg)](https://github.com/suhaotian/async-plugins/actions/workflows/check.yml)
-[![Size](https://deno.bundlejs.com/badge?q=async-plugins@0.0.1&badge=detailed&treeshake=%5B%7B+default+%7D%5D)](https://bundlejs.com/?q=async-plugins%400.0.1&treeshake=%5B%7B+default+%7D%5D)
+[![Size](https://deno.bundlejs.com/badge?q=async-plugins@0.0.2&badge=detailed&treeshake=%5B%7B+default+%7D%5D)](https://bundlejs.com/?q=async-plugins%400.0.2&treeshake=%5B%7B+default+%7D%5D)
 [![npm version](https://badgen.net/npm/v/async-plugins?color=green)](https://www.npmjs.com/package/async-plugins)
 ![Downloads](https://img.shields.io/npm/dm/async-plugins.svg?style=flat)
 ![typescript](https://badgen.net/badge/icon/typescript?icon=typescript&label&color=blue)
@@ -41,25 +41,25 @@ Perfect for handling flaky API calls or network operations:
 import { createAsyncRetry } from 'async-plugins';
 
 const fetchWithRetry = createAsyncRetry({
-  retries: 3,                    // Try up to 3 times
-  minTimeout: 1000,             // Start with 1s delay
-  maxTimeout: 10000,            // Cap at 10s delay
-  factor: 2,                    // Double the delay each time
-  jitter: true,                 // Add randomness to prevent thundering herd
-  shouldRetry: (error) => {     // Only retry on network/5xx errors
-    return error.name === 'NetworkError' || 
-           (error.status && error.status >= 500);
+  retries: 3, // Try up to 3 times
+  minTimeout: 1000, // Start with 1s delay
+  maxTimeout: 10000, // Cap at 10s delay
+  factor: 2, // Double the delay each time
+  jitter: true, // Add randomness to prevent thundering herd
+  shouldRetry: (error) => {
+    // Only retry on network/5xx errors
+    return error.name === 'NetworkError' || (error.status && error.status >= 500);
   },
   onRetry: (error, attempt) => {
     console.warn(`Retry attempt ${attempt} after error:`, error);
-  }
+  },
 });
 
 // Example: Fetch user data with retries
 const getUserData = async (userId: string) => {
   try {
-    const response = await fetchWithRetry(() => 
-      fetch(`/api/users/${userId}`).then(r => r.json())
+    const response = await fetchWithRetry(() =>
+      fetch(`/api/users/${userId}`).then((r) => r.json())
     );
     return response;
   } catch (error) {
@@ -78,8 +78,8 @@ Optimize expensive operations and API calls with smart caching:
 import { createAsyncCache } from 'async-plugins';
 
 const cache = createAsyncCache({
-  ttl: 300000,                // Cache for 5 minutes
-  maxSize: 1000,              // Store up to 1000 items
+  ttl: 300000, // Cache for 5 minutes
+  maxSize: 1000, // Store up to 1000 items
   staleWhileRevalidate: true, // Return stale data while refreshing
 });
 
@@ -111,7 +111,7 @@ Prevent duplicate API calls and redundant operations:
 import { createAsyncDedupe } from 'async-plugins';
 
 const dedupe = createAsyncDedupe({
-  timeout: 5000,      // Auto-expire after 5s
+  timeout: 5000, // Auto-expire after 5s
   errorSharing: true, // Share errors between duplicate calls
 });
 
@@ -123,8 +123,8 @@ const fetchUserData = dedupe(async (userId: string) => {
 
 // Multiple simultaneous calls with same ID
 const [user1, user2] = await Promise.all([
-  fetchUserData('123'),  // Makes API call
-  fetchUserData('123'),  // Uses result from first call
+  fetchUserData('123'), // Makes API call
+  fetchUserData('123'), // Uses result from first call
 ]);
 
 // Check if operation is in progress
@@ -141,14 +141,14 @@ Control concurrency and manage resource usage:
 import { createAsyncQueue } from 'async-plugins';
 
 const queue = createAsyncQueue({
-  concurrency: 2,     // Process 2 tasks at once
-  autoStart: true,    // Start processing immediately
+  concurrency: 2, // Process 2 tasks at once
+  autoStart: true, // Start processing immediately
 });
 
 // Example: Rate-limit API calls
 const processUsers = async (userIds: string[]) => {
   const results = await queue.addAll(
-    userIds.map(id => async () => {
+    userIds.map((id) => async () => {
       const response = await fetch(`/api/users/${id}`);
       return response.json();
     })
@@ -185,8 +185,8 @@ const pollJobStatus = createAsyncPoller(
     return response.json();
   },
   {
-    interval: 1000,   // Poll every second
-    maxAttempts: 30,  // Try up to 30 times
+    interval: 1000, // Poll every second
+    maxAttempts: 30, // Try up to 30 times
     backoff: {
       type: 'exponential',
       factor: 2,
@@ -196,7 +196,7 @@ const pollJobStatus = createAsyncPoller(
     shouldContinue: (result) => result.status === 'running',
     onProgress: (result) => {
       console.log('Job progress:', result.progress);
-    }
+    },
   }
 );
 
