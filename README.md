@@ -235,7 +235,7 @@ If you have questions or run into issues:
 
 ## Contributing
 
-Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details.
+Contributions are welcome!
 
 ## License
 
